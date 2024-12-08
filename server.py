@@ -4,6 +4,8 @@ import sqlite3
 import hashlib
 import datetime
 import jwt
+from collections import defaultdict
+import time
 
 app = Flask(__name__)
 
@@ -11,7 +13,13 @@ UPLOAD_FOLDER = "./uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 DB_FILE = "users.db"
-SECRET_KEY = "your_secret_key_here" # IMPORTANT, CHANGE FOR YOUR OWN SECURITY WHEN YOU SELF HOST A SERVER!
+SECRET_KEY = "your_secret_key_here"  # IMPORTANT, CHANGE FOR YOUR OWN SECURITY WHEN YOU SELF HOST A SERVER!
+
+rate_limit_store = defaultdict(list)
+
+LOGIN_RATE_LIMIT = 5
+UPLOAD_RATE_LIMIT = 5
+REGISTER_RATE_LIMIT = 3600
 
 def init_db():
     if not os.path.exists(DB_FILE):
@@ -74,8 +82,21 @@ def verify_token(token):
         return None
 
 
+def check_rate_limit(action, limit_time):
+    current_time = time.time()
+    action_times = rate_limit_store[action]
+    rate_limit_store[action] = [t for t in action_times if current_time - t < limit_time]
+    if len(rate_limit_store[action]) > 0:
+        return False
+    rate_limit_store[action].append(current_time)
+    return True
+
+
 @app.route("/register", methods=["POST"])
 def register():
+    if not check_rate_limit("register", REGISTER_RATE_LIMIT):
+        return jsonify({"error": "Rate limit exceeded. Please try again later."}), 429
+    
     data = request.json
     email = data.get("email")
     password = data.get("password")
@@ -95,6 +116,9 @@ def register():
 
 @app.route("/login", methods=["POST"])
 def login():
+    if not check_rate_limit("login", LOGIN_RATE_LIMIT):
+        return jsonify({"error": "Rate limit exceeded. Please try again later."}), 429
+    
     data = request.json
     email = data.get("email")
     password = data.get("password")
@@ -123,6 +147,9 @@ def login():
 
 @app.route("/progress/upload", methods=["POST"])
 def upload_progress():
+    if not check_rate_limit("upload", UPLOAD_RATE_LIMIT):
+        return jsonify({"error": "Rate limit exceeded. Please try again later."}), 429
+
     token = request.headers.get("Authorization")
     if token and token.startswith("Bearer "):
         token = token.split(" ")[1]
